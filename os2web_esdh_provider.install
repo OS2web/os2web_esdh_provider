@@ -58,3 +58,11 @@ function os2web_esdh_provider_requirements($phase) {
   );
   return $requirements;
 }
+
+/**
+ * Update all current bullet nodes to use 1 as closed and 0(zero) as open.
+ */
+function os2web_esdh_provider_update_7100(&$sandbox) {
+  // This inverts all field values to the field field_os2web_meetings_bul_closed.
+  db_query('UPDATE {field_data_field_os2web_meetings_bul_closed} SET `field_os2web_meetings_bul_closed_value` = NOT `field_os2web_meetings_bul_closed_value`');
+}
