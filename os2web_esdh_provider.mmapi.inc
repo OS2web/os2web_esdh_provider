@@ -90,10 +90,8 @@ function _os2web_esdh_provider_import_meeting($meeting_id, $force = FALSE, &$con
     // Meeting already exist.
     // Either republish, delete or skip.
     if ($nid) {
-
-      if ($force) {
+      if ($force || (defined('MM_REPUBLISH_MEETINGS') && MM_REPUBLISH_MEETINGS)) {
         err_debug('Republish nid: ' . $nid);
-
         $node = node_load($nid);
         watchdog('acadre MM', 'Using %nid for import.', array('%nid' => $nid), WATCHDOG_DEBUG);
       }
@@ -139,7 +137,8 @@ function _os2web_esdh_provider_import_meeting($meeting_id, $force = FALSE, &$con
     # skifter@bellcom.dk - 2013-04-14 / 2013-04-24
 
     # is the pathauto module loades ?
-    if (module_exists('pathauto')) {
+    // Don't create aliases (vitaliy.sekan@propeople.com.ua)   
+    if (module_exists('pathauto') && !(defined('MN_DISABLE_PATHAUTO') && MN_DISABLE_PATHAUTO)) {
 
       # Loading the path auto modules
       module_load_include('inc', 'pathauto', 'pathauto');
@@ -147,7 +146,8 @@ function _os2web_esdh_provider_import_meeting($meeting_id, $force = FALSE, &$con
       # Setting the new title with committee name and meeting date substring
       $my_date = date_create(substr($meeting['meeting_date_start'], 0,10));
       $format = "d-m-Y";
-      $node->title = $meeting['committee'] . ' - ' . date_format($my_date,$format);
+      $committee_name = is_array($meeting['committee']) ? $meeting['committee']['esdh_name'] : $meeting['committee'];
+      $node->title = $committee_name . ' - ' . date_format($my_date,$format);
 
       # adding the alias and setting pathauto to 0 for this content type. otherwise we get 2 aliases.
       $path_alias = array(
@@ -159,7 +159,6 @@ function _os2web_esdh_provider_import_meeting($meeting_id, $force = FALSE, &$con
       );
       $node->path = $path_alias;
     }
-
 
     $node->field_os2web_meetings_abbr[LANGUAGE_NONE][0]['value'] = substr($meeting['description'], 0, 49);
     // If field has a format, you need to define it. Here we define a default filtered_html format for a body field.
@@ -204,11 +203,13 @@ function _os2web_esdh_provider_import_meeting($meeting_id, $force = FALSE, &$con
     }
 
     // Delete all bullet points before importing.
-    $bullets = array_shift($node->field_os2web_meetings_bullets);
-    if (is_array($bullets)) {
-      $nids_to_delete = array();
-      foreach ($bullets as $nids) {
-        $nids_to_delete[$nids['target_id']] = $nids['target_id'];
+    if (is_array($node->field_os2web_meetings_bullets)) {
+      $bullets = array_shift($node->field_os2web_meetings_bullets);
+      if (is_array($bullets)) {
+        $nids_to_delete = array();
+        foreach ($bullets as $nids) {
+          $nids_to_delete[$nids['target_id']] = $nids['target_id'];
+        }
       }
     }
 
@@ -414,7 +415,7 @@ function _os2web_esdh_provider_import_file($file_meta) {
     return FALSE;
   }
 
-  if (file_uri_scheme($uri) != 'public') {
+  if (!(defined('MM_USE_ALTERNATIVE_FILE_URI_SCHEME') && MM_USE_ALTERNATIVE_FILE_URI_SCHEME) && file_uri_scheme($uri) != 'public') {
     watchdog('acadre MM', 'Invalid scheme for uri %uri, Possibly absolut path ? ' . $uri, array(
       '%uri', $uri), WATCHDOG_ERROR);
     error_log("Var: \$uri = " . print_r($uri, 1));
@@ -443,7 +444,7 @@ function _os2web_esdh_provider_import_file($file_meta) {
 
   // Schedule for PDF conversion
   // $convert = FALSE; // DEBUG.
-  if ($convert) {
+  if ($convert && module_exists('os2web_adlib_api')) {
     drupal_load('module', 'os2web_adlib_api');
     os2web_adlib_api_convert_to_pdf($file->fid, $file->filename);
     watchdog('os2web_adlib_api', 'File %filename (fid: %fid) queued for PDF conversion.', array(
@@ -459,8 +460,10 @@ function _os2web_esdh_provider_import_file($file_meta) {
 /**
  * Imports a termname into a vacabulary. Does dupe check.
  *
- * @param string $term_name
- *   Term machine name
+ * @param mixed $term_name
+ *   Term name, or array containing term name and ESDH ID for
+ *   the term.
+ *
  * @param string $vocab
  *   Vocabulary machine name
  *
@@ -468,30 +471,57 @@ function _os2web_esdh_provider_import_file($file_meta) {
  *   Drupal standard Term object
  */
 function _acadre_esdh_import_term($term_name, $vocab) {
+  // Some MM plugins provide both term name and the ESDH ID for the
+  // term. The latter makes it possible to handle multiple terms with
+  // same name and automatically updating of term names based on data
+  // from the ESDH system.
+  if (is_array($term_name)) {
+    $term_esdh_id = $term_name['esdh_id'];
+    $term_esdh_id_field = $term_name['esdh_id_field'];
+    $term_name = $term_name['esdh_name'];
+  }
 
   err_debug('Start import term');
 
   // TODO: Process members of the committee.
   // FIXME: MAke vocab name configurable.
   $vid = db_select('taxonomy_vocabulary', 'tv')
-      ->fields('tv', array('vid'))
-      ->condition('machine_name', $vocab)
-      ->execute()
-      ->fetchField();
+    ->fields('tv', array('vid'))
+    ->condition('machine_name', $vocab)
+    ->execute()
+    ->fetchField();
 
   $term = new stdClass();
   $term->vid = $vid;
   $term->name = $term_name;
 
-  $tid = db_select('taxonomy_term_data', 'td')
-          ->fields('td', array('tid'))
-          ->condition('name', $term->name)
-          ->condition('vid', $term->vid)
-          ->execute()->fetchObject();
+  // Searching for an existing term based on the provided ESDH ID.
+  if (!empty($term_esdh_id_field) && !empty($term_esdh_id) && $term_esdh_id > 0) {
+    $term->{$term_esdh_id_field}['und'][0]['value'] = $term_esdh_id;
+
+    $query = new EntityFieldQuery();
+    $result = $query->entityCondition('entity_type', 'taxonomy_term')
+      ->propertyCondition('vid', $vid)
+      ->fieldCondition($term_esdh_id_field, 'value', $term_esdh_id, '=')
+      ->execute();
+    if (isset($result['taxonomy_term'])) {
+      $tid = array_shift($result['taxonomy_term']);
+    }
+  }
+  // If no ESDH ID is provided are we falling back and selecting on the
+  // term name.
+  else {
+    $tid = db_select('taxonomy_term_data', 'td')
+      ->fields('td', array('tid'))
+      ->condition('name', $term->name)
+      ->condition('vid', $term->vid)
+      ->execute()->fetchObject();
+  }
 
   if (isset($tid->tid) && $tid->tid > 0) {
     $term->tid = (int) $tid->tid;
   }
+
   taxonomy_term_save($term);
 
   return $term;
@@ -564,15 +594,20 @@ function _os2web_esdh_provider_node_tab_page($nid, $op = FALSE) {
  *   Sanetized filename with same extension.
  */
 function _os2web_esdh_provider_sanetize_filename($filename) {
-  // Replace whitespace.
-  // $filename = str_replace(' ', '_', $filename);
-  // Remove remaining unsafe characters.
-  // $filename = preg_replace('![^0-9A-Za-z_.- ]!', '', $filename);
-  $filename = preg_replace('![/"]!', '-', $filename);
-  // Remove multiple consecutive non-alphabetical characters.
-  $filename = preg_replace('/(_)_+|(\.)\.+|(-)-+/', '\\1\\2\\3', $filename);
-  // Force lowercase to prevent issues on case-insensitive file systems.
-  // $filename = strtolower($filename);
+  if (module_exists('transliteration')) {
+    $filename = transliteration_clean_filename($filename);
+  }
+  else {
+    // Replace whitespace.
+    // $filename = str_replace(' ', '_', $filename);
+    // Remove remaining unsafe characters.
+    // $filename = preg_replace('![^0-9A-Za-z_.- ]!', '', $filename);
+    $filename = preg_replace('![/"]!', '-', $filename);
+    // Remove multiple consecutive non-alphabetical characters.
+    $filename = preg_replace('/(_)_+|(\.)\.+|(-)-+/', '\\1\\2\\3', $filename);
+    // Force lowercase to prevent issues on case-insensitive file systems.
+    // $filename = strtolower($filename);
+  }
   $pi = pathinfo($filename);
   if (isset($pi['extension'])) {
     return substr(trim($pi['filename']), 0, 160) . '.' . $pi['extension'];

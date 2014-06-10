@@ -34,6 +34,7 @@ function _os2web_esdh_provider_status() {
   // Show a table of watchdog entries if the debug flag is on.
   $watchdog_table = '';
   if (variable_get('os2web_esdh_provider_debug_info')) {
+    $watchdog_rows = array();
     $watchdog_messages = db_query('SELECT * FROM {watchdog} w WHERE w.type = :type AND w.severity = :severity ORDER BY w.timestamp DESC', array(':type' => 'acadre MM', ':severity' => WATCHDOG_WARNING));
     $watchdog_head = array(t('Warning messages in descending order'), t('Date'));
     foreach ($watchdog_messages as $row) {
@@ -160,7 +161,7 @@ function _os2web_esdh_provider_status_confirm_submit($form, &$form_state) {
     'file' => drupal_get_path('module', 'os2web_esdh_provider') . '/os2web_esdh_provider.mmapi.inc',
     'init_message' => t('Scanner filer'),
   );
-  $meetings = os2web_esdh_provider_invoke('mm', 'get_import_list');
+  $meetings = os2web_esdh_provider_invoke('mm', 'get_import_list', $force, $focus);
   foreach ($meetings as $meeting) {
     if (empty($focus) || in_array($meeting['id'], $focus)) {
       $batch['operations'][] = array(
