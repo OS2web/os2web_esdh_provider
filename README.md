@@ -4,9 +4,9 @@ This repository is deprecated, and may be deleted.
 
 Instead use <https://github.com/OS2WebCore/os2web_esdh_provider>. Where the following tags
 provide:
-7.x-1.1 - master branch state from this repository.
-7.x-1.2 - develop branch state from this repository.
-7.x-1.3 - merged with PRs: handle import with drush script, upated menulinks.
+* 7.x-1.1 - master branch state from this repository.
+* 7.x-1.2 - develop branch state from this repository.
+* 7.x-1.3 - merged with PRs: handle import with drush script, upated menulinks.
 
 OS2Web ESDH Provider
 ==============================
